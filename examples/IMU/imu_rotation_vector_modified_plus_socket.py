@@ -4,8 +4,16 @@ import cv2
 import depthai as dai
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+import socket
+import struct
 
-
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.bind(('localhost', 8000))
+server_socket.listen(1)
+print("Waiting for a connection...")
+conn, addr = server_socket.accept()
+print("Connected to", addr, "(state )", conn)
+socket_stream_on = True
 
 device = dai.Device()
 
@@ -72,7 +80,9 @@ with device:
         return delta.total_seconds()*1000
 
     # Output queue for imu bulk packets
-    imuQueue = device.getOutputQueue(name="imu", maxSize=50, blocking=False)
+    imuQueue = device.getOutputQueue(name="imu", maxSize=1, blocking=False)
+
+
     video = device.getOutputQueue(name="video", maxSize=1, blocking=False)
     baseTs = None
     while True:
@@ -100,7 +110,7 @@ with device:
             # print(f"Accuracy (rad): {imuF.format(rVvalues.rotationVectorAccuracy)}")
 
             euler_angles = quaternion_to_euler(imuF.format(rVvalues.i), imuF.format(rVvalues.j), imuF.format(rVvalues.k), imuF.format(rVvalues.real))
-            print("euler_angles ", euler_angles)
+            # print("euler_angles ", euler_angles)
 
             euler_radian = np.radians(euler_angles)
 
@@ -134,12 +144,24 @@ with device:
         # right_horizon = 600
 
         # print("left_horizon ", left_horizon)
-        cv2.line(frame_disp, (0, height - left_horizon), (width - 1, height - right_horizon),
-                 (255, 255, 255), 2)
-        cv2.imshow("video", frame_disp)
 
+        # cv2.line(frame_disp, (0, height - left_horizon), (width - 1, height - right_horizon),
+        #          (255, 255, 255), 2)
+        # cv2.imshow("video", frame_disp)
 
+        frame_disp = np.flip(frame_disp, 0)
+        frame_disp = cv2.cvtColor(frame_disp, cv2.COLOR_BGR2RGBA)  # Change this line to convert to RGBA
+        # data = frame_disp.tostring()
+        data = frame_disp.flatten()  # Flatten the array
 
+        try:
+            conn.sendall(struct.pack('<L', len(data)))
+            # Then data
+            conn.sendall(data)
+        except (socket.error, BrokenPipeError, ConnectionResetError):
+            print("Client disconnected, waiting for new client")
+            socket_stream_on = False
+            break
 
         if cv2.waitKey(1) == ord('q'):
             break
